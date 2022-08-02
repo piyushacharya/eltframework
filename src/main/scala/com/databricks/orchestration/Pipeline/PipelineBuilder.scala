@@ -102,18 +102,21 @@ class PipelineBuilder {
     task.taskStatus = PipelineNodeStatus.None
     task.runId = runId
     task.productName = productName
-    task.topicName = topicName
-    task.inputPath = inputPath
-    task.outputPath = outputPath
-    task.batchId = batchId
     task.logger = Logger.getLogger(task.getClass)
-    task.tableName = tableName
-    task.partitionSize = partitionSize
     task.pipelineDefId = pipelineDefId
-    task.readerOptions = readerOptions
-    task.processorOptions = processorOptions
-    task.writerOptions = writerOptions
-    task.databaseName = databaseName
+
+//    task.topicName = topicName
+//    task.inputPath = inputPath
+//    task.outputPath = outputPath
+//    task.batchId = batchId
+//
+//    task.tableName = tableName
+//    task.partitionSize = partitionSize
+//
+//    task.readerOptions = readerOptions
+//    task.processorOptions = processorOptions
+//    task.writerOptions = writerOptions
+//    task.databaseName = databaseName
     task
   }
 

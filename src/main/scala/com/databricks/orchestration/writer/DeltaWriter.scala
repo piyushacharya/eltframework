@@ -12,7 +12,7 @@ import org.apache.spark.sql.DataFrame
 
 import java.sql.Timestamp
 
-class DeltaWriter extends BaseWriter {
+class DeltaWriterInMobi extends BaseWriter {
   override def call(): Any = {
     var flag = true
     var retryCount: Int = 0
@@ -116,6 +116,91 @@ class DeltaWriter extends BaseWriter {
               }
             }
         }
+        updateAndStoreStatus(PipelineNodeStatus.Finished, updateDB = true)
+        flag = false
+      } // end try
+      catch {
+        case modException: DeltaConcurrentModificationException => {
+          retryCount += 1
+          logger.warn(s"Got Concurrent Modification Exception. Rerunning ${modException.getMessage}")
+          if (retryCount == 3) {
+            throw new Exception("Concurrent Modification Exception, Tried thrice...")
+          }
+          Thread.sleep(500)
+        }
+        case interruptedException: InterruptedException => {
+          logger.warn(s"InterruptedException Exception.")
+          updateRetryableExceptionStatus(PipelineNodeStatus.EVENT_TODO, interruptedException)
+        }
+        case sparkException : SparkException => {
+          logger.warn(s"SparkException Exception.")
+          updateRetryableExceptionStatus(PipelineNodeStatus.EVENT_TODO, sparkException)
+        }
+        case exception: Exception => {
+          logger.error("got exception in " + taskName)
+          println(s"exception $exception")
+          logger.error(exception.getMessage, exception)
+          updateAndStoreStatus(PipelineNodeStatus.Error, exception)
+          flag = false
+        }
+      } // end catch
+    }
+  }
+
+  def getDistinctPartitions(partitionKeys: Option[String], rawDf: DataFrame): String = {
+    var partitionStr = ""
+    partitionKeys match {
+      case Some(partition) => {
+        val partitions = partition.split("\\|").toSeq
+        val processTimePartn = partitions.filter(_.contains("process_time"))
+        if (processTimePartn.nonEmpty && Set("ssp", "programmatics").contains(databaseName)) {
+          val tsEncoder = rawDf.sparkSession.implicits.newTimeStampEncoder
+          val distinctPart = rawDf.selectExpr(processTimePartn: _*).distinct.map(_.getAs[Timestamp](0))(tsEncoder)
+            .collect().head
+          logger.info(s"INFO: distinct partitions ${distinctPart} ")
+          println(s"INFO: distinct partitions ${distinctPart} ")
+          partitionStr = distinctPart.toString()
+        }
+      }
+      case None => {
+        partitionStr = ""
+      }
+    }
+    partitionStr
+  }
+}
+
+
+
+
+class DeltaWriter extends BaseWriter {
+  override def call(): Any = {
+    var flag = true
+    var retryCount: Int = 0
+    while (flag) {
+      try {
+        updateAndStoreStatus(PipelineNodeStatus.Started)
+        logger.info("INFO: Delta writer started")
+        var rawDf = this.inputDataframe(PROCESSEDDF)
+
+        val tableName = s"""${this.databaseName}.${this.tableName}"""
+//        val partitionKeys = this.writerOptions.get("partitionKeys")
+//        val partitionValues = this.writerOptions.get("partitionValues")
+//        val replaceWhere = this.writerOptions.get("replaceWhere")
+////        val writeMode = this.writerOptions.get("mode") match {
+//          case Some(value) => value.toLowerCase match {
+//            case "append" => "append"
+//            case _ => "overwrite"
+//          }
+//          case None => "overwrite"
+//        }
+
+        rawDf.write.format("delta").saveAsTable(tableName)
+
+
+
+
+
         updateAndStoreStatus(PipelineNodeStatus.Finished, updateDB = true)
         flag = false
       } // end try

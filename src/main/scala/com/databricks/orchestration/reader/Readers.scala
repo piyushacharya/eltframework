@@ -134,13 +134,18 @@ class AvroReader() extends BaseReader{
 }
 
 class CsvReader() extends BaseReader{
-  override def call()= {
+  override def call()={
     try {
-      updateAndStoreStatus(PipelineNodeStatus.Started, updateDB = true)
-      val df = if(this.readerOptions == null && !this.readerOptions.contains("schema"))
-        spark.read.format("csv").load(this.inputPath) else if(!this.readerOptions.contains("schema"))
-        spark.read.format("csv").options(this.readerOptions).load(this.inputPath) else
-        spark.read.format("csv").options(this.readerOptions).schema(this.readerOptions.getOrElse("schema","")).load(this.inputPath)
+//      updateAndStoreStatus(PipelineNodeStatus.Started, updateDB = true)
+      println("hello")
+      val df =
+
+        if(this.readerOptions == null && !this.readerOptions.contains("schema"))
+          spark.read.format("csv").load(this.inputPath)
+        else if(!this.readerOptions.contains("schema"))
+          spark.read.format("csv").options(this.readerOptions).load(this.inputPath)
+        else
+          spark.read.format("csv").options(this.readerOptions).schema(this.readerOptions.getOrElse("schema","")).load(this.inputPath)
 
       val returnMap=new mutable.HashMap[String,DataFrame]()
       returnMap += PROCESSEDDF -> df
