@@ -10,7 +10,7 @@ import org.apache.spark.sql.functions.{current_date, current_timestamp, lit, max
 import java.util.concurrent.Callable
 import scala.collection.mutable
 import io.delta.exceptions.DeltaConcurrentModificationException
-import com.inmobi.rna.partition.RegisterLensPartitions
+//import com.inmobi.rna.partition.RegisterLensPartitions
 
 object TaskOutputType extends Enumeration {
   val None, dataframe, temp_table = Value
@@ -44,6 +44,7 @@ abstract class Task extends Callable[Any] {
   var processorOptions: Map[String, String] = null
   var inputPath: String = null
   var outputPath: String = null
+  var updateStatus = false
 
 
   def updateRetryableExceptionStatus(status: PipelineNodeStatus.Value, exception: Exception = null): Unit = {
@@ -88,7 +89,12 @@ abstract class Task extends Callable[Any] {
       }
     }
   }
-  def updateAndStoreStatus(status: PipelineNodeStatus.Value, exception: Exception = null, updateDB : Boolean = false) = {
+  def updateAndStoreStatus(status: PipelineNodeStatus.Value, exception: Exception = null, updateDB : Boolean = false): Any = {
+
+    if (updateStatus == false)
+      taskStatus = status;
+      return None;
+
     try {
       taskStatus = status;
       if (status == PipelineNodeStatus.Error ||  updateDB){
@@ -154,7 +160,7 @@ abstract class Task extends Callable[Any] {
         "-processingDate" , processTime)
     logger.info(s"LENS Registration for processTime: ${processTime}, db name: ${databaseName} & table: ${tableName} for processTime: ${processTime}")
     println(s"LENS Registration for processTime: ${processTime}, db name: ${databaseName} & table: ${tableName} for processTime: ${processTime}")
-    RegisterLensPartitions.main(args);
+//    RegisterLensPartitions.main(args);
   }
 
   def storeOperationStats() {
