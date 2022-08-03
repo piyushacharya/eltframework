@@ -7,6 +7,7 @@ import org.apache.spark.sql.functions._
 import scala.collection.mutable.ListBuffer
 import com.databricks.orchestration.utility.Utility.checkTable
 import io.delta.exceptions.DeltaConcurrentModificationException
+import io.delta.tables.DeltaTable
 import org.apache.spark.SparkException
 import org.apache.spark.sql.DataFrame
 
@@ -93,28 +94,28 @@ class DeltaWriterInMobi extends BaseWriter {
 
         val distinctPartition = getDistinctPartitions(partitionKeys, rawDf);
         if (distinctPartition.nonEmpty) {
-            updateAndStoreStatus(PipelineNodeStatus.RegisterLensPart, updateDB = true)
-            logger.info(s"Moved to RegisterLensPart state")
-            println(s"INFO: Moved to RegisterLensPart state")
-            var isComplete = true
-            var retry: Int = 1
-            while (isComplete) {
-              try {
-                registerLensPartitions(this.tableName,this.databaseName, distinctPartition)
-                isComplete = false
-              } catch {
-                case exception: Exception => {
-                  logger.warn(s"Received exception while registering partitions ${retryCount}")
+          updateAndStoreStatus(PipelineNodeStatus.RegisterLensPart, updateDB = true)
+          logger.info(s"Moved to RegisterLensPart state")
+          println(s"INFO: Moved to RegisterLensPart state")
+          var isComplete = true
+          var retry: Int = 1
+          while (isComplete) {
+            try {
+              registerLensPartitions(this.tableName, this.databaseName, distinctPartition)
+              isComplete = false
+            } catch {
+              case exception: Exception => {
+                logger.warn(s"Received exception while registering partitions ${retryCount}")
+                exception.printStackTrace()
+                if (retry == 4) {
                   exception.printStackTrace()
-                  if (retry == 4) {
-                    exception.printStackTrace()
-                    throw exception
-                  }
-                  Thread.sleep(retry * 2000)
-                  retry = +1
+                  throw exception
                 }
+                Thread.sleep(retry * 2000)
+                retry = +1
               }
             }
+          }
         }
         updateAndStoreStatus(PipelineNodeStatus.Finished, updateDB = true)
         flag = false
@@ -132,7 +133,7 @@ class DeltaWriterInMobi extends BaseWriter {
           logger.warn(s"InterruptedException Exception.")
           updateRetryableExceptionStatus(PipelineNodeStatus.EVENT_TODO, interruptedException)
         }
-        case sparkException : SparkException => {
+        case sparkException: SparkException => {
           logger.warn(s"SparkException Exception.")
           updateRetryableExceptionStatus(PipelineNodeStatus.EVENT_TODO, sparkException)
         }
@@ -171,9 +172,72 @@ class DeltaWriterInMobi extends BaseWriter {
 }
 
 
-
-
 class DeltaWriter extends BaseWriter {
+
+  def append(rawDf: DataFrame, tableOrLocation: String, tableName: String, saveLocation: String): Unit = {
+    if (tableOrLocation == "table")
+      rawDf.write.format("delta").mode("append").saveAsTable(tableName)
+    else
+      rawDf.write.format("delta").mode("append").save(saveLocation)
+
+  }
+
+  def overwrite(rawDf: DataFrame, tableOrLocation: String, tableName: String, saveLocation: String): Unit = {
+    if (tableOrLocation == "table")
+      rawDf.write.format("delta").mode("append").saveAsTable(tableName)
+    else
+      rawDf.write.format("delta").mode("append").save(saveLocation)
+  }
+
+  def overWriteReplaceWhere(rawDf: DataFrame, tableOrLocation: String, tableName: String, saveLocation: String, replaceWhereCondition: String): Unit = {
+    if (tableOrLocation == "table") {
+      rawDf.write.format("delta")
+        .option("replaceWhere", replaceWhereCondition)
+        .mode("overwrite")
+        .saveAsTable(tableName)
+    }
+    else {
+      rawDf.write.format("delta")
+        .option("replaceWhere", replaceWhereCondition)
+        .mode("overwrite")
+        .save(saveLocation)
+
+    }
+  }
+
+  def merge(targetTable: String, upodatesDF: DataFrame, match_conditions: String, delete_condiotion: String, updateCondition: String, insetColumns: Map[String, String], updateColumns: Map[String, String]): Unit = {
+
+    val deltaTableTarget = DeltaTable.forName(targetTable)
+
+    var mergeObject = deltaTableTarget
+      .as("target")
+      .merge(
+        sourceDF.as("updates"),
+        match_conditions)
+
+    // delete
+    if (delete_condiotion != null) {
+      mergeObject = mergeObject.whenMatched(delete_condiotion).delete()
+    }
+    // update
+
+    if (updateColumns != null)
+      mergeObject = mergeObject.whenMatched().updateExpr(updateColumns)
+    else
+      mergeObject = mergeObject.whenMatched().updateAll()
+
+
+    if (insetColumns != null)
+      mergeObject = mergeObject.whenNotMatched().insertExpr(insetColumns)
+    else
+      mergeObject = mergeObject.whenNotMatched().insertAll()
+
+    mergeObject.execute()
+
+
+  }
+
+
   override def call(): Any = {
     var flag = true
     var retryCount: Int = 0
@@ -184,21 +248,46 @@ class DeltaWriter extends BaseWriter {
         var rawDf = this.inputDataframe(PROCESSEDDF)
 
         val tableName = s"""${this.databaseName}.${this.tableName}"""
-//        val partitionKeys = this.writerOptions.get("partitionKeys")
-//        val partitionValues = this.writerOptions.get("partitionValues")
-//        val replaceWhere = this.writerOptions.get("replaceWhere")
-////        val writeMode = this.writerOptions.get("mode") match {
-//          case Some(value) => value.toLowerCase match {
-//            case "append" => "append"
-//            case _ => "overwrite"
-//          }
-//          case None => "overwrite"
-//        }
+        val saveLocation = s"${this.outputPath}"
+        ""
 
-        rawDf.write.format("delta").saveAsTable(tableName)
+        //        val partitionKeys = this.writerOptions.get("partitionKeys")
+        //        val partitionValues = this.writerOptions.get("partitionValues")
+        //        val replaceWhere = this.writerOptions.get("replaceWhere")
+        ////        val writeMode = this.writerOptions.get("mode") match {
+        //          case Some(value) => value.toLowerCase match {
+        //            case "append" => "append"
+        //            case _ => "overwrite"
+        //          }
+        //          case None => "overwrite"
+        //        }
+
+        // This is to change as per writing options
+        val tableOrLocation = "table"
+        var writeMode: String = null
+
+        if (this.writerOptions != null)
+          writeMode = this.writerOptions.get("mode").toString
+        else
+          writeMode = "overwrite"
 
 
+        val targetTable = null
+        val match_condition = null
+        val delete_condition= null
+        val update_condition = null
+        val insetColumns = null
+        val updateColumns = null
+        val replaceWhereCondition = null;
 
+        if (writeMode == "append")
+          append(rawDf, tableOrLocation, tableName, saveLocation)
+        else if (writeMode == "merge")
+          merge(targetTable, rawDf, match_condition, delete_condition, update_condition, insetColumns , updateColumns)
+        else if (writeMode == "replaceWhere")
+          overWriteReplaceWhere(rawDf, tableOrLocation, tableName, saveLocation,replaceWhereCondition)
+        else
+          overwrite(rawDf, tableOrLocation, tableName, saveLocation)
 
 
         updateAndStoreStatus(PipelineNodeStatus.Finished, updateDB = true)
@@ -217,7 +306,7 @@ class DeltaWriter extends BaseWriter {
           logger.warn(s"InterruptedException Exception.")
           updateRetryableExceptionStatus(PipelineNodeStatus.EVENT_TODO, interruptedException)
         }
-        case sparkException : SparkException => {
+        case sparkException: SparkException => {
           logger.warn(s"SparkException Exception.")
           updateRetryableExceptionStatus(PipelineNodeStatus.EVENT_TODO, sparkException)
         }
